@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  QuickLend Component 1 - customer API protected by a Cognito JWT authoriser,
+  with per-customer isolation enforced against the verified token subject (test V1).
+  Reuses the existing least-privilege execution role and the Component 2 encrypted table.
+
+Parameters:
+  UserPoolId:
+    Type: String
+    Default: ap-southeast-2_Ek97hECd5
+  AppClientId:
+    Type: String
+    Default: 3qhfkvm3rupae742hf1h3db8p1
+  ExecutionRoleArn:
+    Type: String
+    Default: arn:aws:iam::308054409786:role/quicklend-loan-scoring-exec
+  TableName:
+    Type: String
+    Default: quicklend-loan-applications
+
+Resources:
+  # The execution role may write logs only to this group and cannot create groups, so the group is created here.
+  LoanScoringLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/quicklend-loan-scoring
+      RetentionInDays: 30
+
+  LoanScoringFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LoanScoringLogGroup
+    Properties:
+      FunctionName: quicklend-loan-scoring
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !Ref ExecutionRoleArn
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+      Code:
+        ZipFile: |
+          import json, os
+          import boto3
+          from boto3.dynamodb.conditions import Key
+
+          table = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
+
+          def respond(code, body):
+              return {"statusCode": code,
+                      "headers": {"Content-Type": "application/json"},
+                      "body": json.dumps(body, default=str)}
+
+          def handler(event, context):
+              # The JWT authoriser has already verified the token's signature, issuer and audience.
+              # The caller's identity comes from the verified 'sub' claim, never from the request.
+              caller = event["requestContext"]["authorizer"]["jwt"]["claims"]["sub"]
+              requested = event["pathParameters"]["customerId"]
+              if requested != caller:
+                  print(json.dumps({"decision": "DENY", "caller": caller, "requested": requested}))
+                  return respond(403, {"message": "Forbidden: you can only read your own loan applications"})
+              items = table.query(KeyConditionExpression=Key("customerId").eq(caller))["Items"]
+              return respond(200, {"customerId": caller, "applications": items})
+
+  CustomerApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: quicklend-customer-api
+      ProtocolType: HTTP
+
+  CognitoAuthoriser:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref CustomerApi
+      Name: quicklend-cognito
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      JwtConfiguration:
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolId}
+        Audience:
+          - !Ref AppClientId
+
+  LambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref CustomerApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt LoanScoringFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  GetApplicationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref CustomerApi
+      RouteKey: GET /applications/{customerId}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoAuthoriser
+      Target: !Sub integrations/${LambdaIntegration}
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref CustomerApi
+      StageName: $default
+      AutoDeploy: true
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LoanScoringFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CustomerApi}/*/*/applications/*
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${CustomerApi}.execute-api.${AWS::Region}.amazonaws.com
