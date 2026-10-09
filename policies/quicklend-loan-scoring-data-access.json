@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OneTableFourActions",
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"],
+      "Resource": "arn:aws:dynamodb:ap-southeast-2:308054409786:table/quicklend-loan-applications"
+    },
+    {
+      "Sid": "DecryptOnlyViaDynamoDB",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+      "Resource": "arn:aws:kms:ap-southeast-2:308054409786:key/8a27498d-a871-4e8f-9e71-2aa265f50874",
+      "Condition": { "StringEquals": { "kms:ViaService": "dynamodb.ap-southeast-2.amazonaws.com" } }
+    },
+    {
+      "Sid": "WriteOwnLogsOnly",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:ap-southeast-2:308054409786:log-group:/aws/lambda/quicklend-loan-scoring:*"
+    }
+  ]
+}
