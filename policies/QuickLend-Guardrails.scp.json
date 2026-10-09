@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyLongLivedIamCredentials",
+      "Effect": "Deny",
+      "Action": ["iam:CreateUser", "iam:CreateAccessKey", "iam:CreateLoginProfile"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProtectAuditTrail",
+      "Effect": "Deny",
+      "Action": ["cloudtrail:StopLogging", "cloudtrail:DeleteTrail", "cloudtrail:UpdateTrail"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProtectThreatDetection",
+      "Effect": "Deny",
+      "Action": ["guardduty:DeleteDetector", "guardduty:UpdateDetector", "guardduty:DisassociateFromMasterAccount"],
+      "Resource": "*"
+    }
+  ]
+}
